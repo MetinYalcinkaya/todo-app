@@ -16,7 +16,7 @@ impl std::fmt::Display for Task {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct TodoList {
     pub tasks: Vec<Task>,
     pub next_id: u32,
