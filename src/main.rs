@@ -34,16 +34,14 @@ async fn main() {
 
 #[instrument(skip(state))]
 async fn list_todos(State(state): State<Arc<RwLock<TodoList>>>) -> Json<Vec<Task>> {
-    let cloned_state = Arc::clone(&state);
-    let read_guard = cloned_state.read().await;
+    let read = state.read().await;
     debug!("Listing all todos: {:?}", state);
-    Json(read_guard.get_list())
+    Json(read.get_list())
 }
 
-#[instrument]
+#[instrument(skip(state))]
 async fn add_todo(State(state): State<Arc<RwLock<TodoList>>>, Json(payload): Json<CreateTodo>) {
-    let cloned_state = Arc::clone(&state);
-    let mut write_guard = cloned_state.write().await;
+    let mut write = state.write().await;
     info!("Adding task: {}", payload.text);
-    write_guard.add(payload.text);
+    write.add(payload.text);
 }
