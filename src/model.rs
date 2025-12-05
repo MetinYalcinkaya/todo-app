@@ -1,4 +1,3 @@
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -52,8 +51,8 @@ impl TodoList {
     }
 
     // pub fn get_list(&self) -> Json<Vec<Task>> {
-    pub fn get_list(&self) -> Json<Vec<Task>> {
-        Json(self.tasks.clone())
+    pub fn get_list(&self) -> Vec<Task> {
+        self.tasks.clone()
     }
 
     pub fn mark_done(&mut self, id: u32) -> Result<&Task, TodoError> {

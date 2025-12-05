@@ -32,7 +32,7 @@ async fn main() {
 async fn list_todos(State(state): State<Arc<RwLock<TodoList>>>) -> Json<Vec<Task>> {
     let cloned_state = Arc::clone(&state);
     let read_guard = cloned_state.read().await;
-    read_guard.get_list()
+    Json(read_guard.get_list())
 }
 
 async fn add_todo(State(state): State<Arc<RwLock<TodoList>>>, Json(payload): Json<String>) {
