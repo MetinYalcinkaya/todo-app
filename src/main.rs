@@ -8,6 +8,11 @@ struct AppState {
     todo_list: Arc<RwLock<TodoList>>,
 }
 
+#[derive(Deserialize)]
+struct CreateTodo {
+    text: String,
+}
+
 #[tokio::main]
 async fn main() {
     // let state = Arc::new(RwLock::new(TodoList::default()));
@@ -35,8 +40,8 @@ async fn list_todos(State(state): State<Arc<RwLock<TodoList>>>) -> Json<Vec<Task
     Json(read_guard.get_list())
 }
 
-async fn add_todo(State(state): State<Arc<RwLock<TodoList>>>, Json(payload): Json<String>) {
+async fn add_todo(State(state): State<Arc<RwLock<TodoList>>>, Json(payload): Json<CreateTodo>) {
     let cloned_state = Arc::clone(&state);
     let mut write_guard = cloned_state.write().await;
-    write_guard.add(payload);
+    write_guard.add(payload.text);
 }
