@@ -1,0 +1,7 @@
+
+CREATE TABLE tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    done BOOLEAN NOT NULL DEFAULT 0,
+    priority TEXT NOT NULL
+);
