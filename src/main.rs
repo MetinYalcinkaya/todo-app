@@ -1,7 +1,8 @@
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use todo_server::model::{Task, TodoList};
+use tokio::sync::RwLock;
 
 struct AppState {
     todo_list: Arc<RwLock<TodoList>>,
@@ -30,12 +31,12 @@ async fn main() {
 
 async fn list_todos(State(state): State<Arc<RwLock<TodoList>>>) -> Json<Vec<Task>> {
     let cloned_state = Arc::clone(&state);
-    let read_guard = cloned_state.read().unwrap();
+    let read_guard = cloned_state.read().await;
     read_guard.get_list()
 }
 
 async fn add_todo(State(state): State<Arc<RwLock<TodoList>>>, Json(payload): Json<String>) {
     let cloned_state = Arc::clone(&state);
-    let mut write_guard = cloned_state.write().unwrap();
+    let mut write_guard = cloned_state.write().await;
     write_guard.add(payload);
 }
