@@ -1,11 +1,15 @@
 use axum::{Json, Router, extract::State, routing::get};
 use serde::Deserialize;
+use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
-use todo_server::model::{Task, TodoList};
-use tokio::sync::RwLock;
+use todo_server::model::{Priority, Task};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, info, instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+struct AppState {
+    pool: sqlx::SqlitePool,
+}
 
 #[derive(Deserialize, Debug)]
 struct CreateTodo {
@@ -22,7 +26,11 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let state = Arc::new(RwLock::new(TodoList::default()));
+    dotenvy::dotenv().unwrap();
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let pool = SqlitePoolOptions::new().connect(&db_url).await.unwrap();
+
+    let state = Arc::new(AppState { pool });
     let app = Router::new()
         .route("/todos", get(list_todos).post(add_todo))
         .with_state(state)
@@ -33,15 +41,27 @@ async fn main() {
 }
 
 #[instrument(skip(state))]
-async fn list_todos(State(state): State<Arc<RwLock<TodoList>>>) -> Json<Vec<Task>> {
-    let read = state.read().await;
-    debug!("Listing all todos: {:?}", state);
-    Json(read.get_list())
+async fn list_todos(State(state): State<Arc<AppState>>) -> Json<Vec<Task>> {
+    let rows = sqlx::query_as!(
+        Task,
+        r#"
+        SELECT id, text, done, priority as "priority: Priority" FROM tasks
+        "#
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap();
+    info!("Listing all todos");
+    Json(rows)
 }
 
 #[instrument(skip(state))]
-async fn add_todo(State(state): State<Arc<RwLock<TodoList>>>, Json(payload): Json<CreateTodo>) {
-    let mut write = state.write().await;
-    info!("Adding task: {}", payload.text);
-    write.add(payload.text);
+async fn add_todo(State(state): State<Arc<AppState>>, Json(payload): Json<CreateTodo>) {
+    let sql = "INSERT INTO tasks (text, done, priority) values ($1, false, 'Low')";
+    info!("Adding task to database: {}", payload.text);
+    sqlx::query(sql)
+        .bind(payload.text)
+        .execute(&state.pool)
+        .await
+        .unwrap();
 }

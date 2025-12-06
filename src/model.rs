@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
+use sqlx::Type;
 use thiserror::Error;
 
 #[derive(Default, Clone, Deserialize, Serialize, Debug)]
 pub struct Task {
-    pub id: u32,
+    pub id: i64,
     pub text: String,
     pub done: bool,
     pub priority: Priority,
@@ -19,7 +20,7 @@ impl std::fmt::Display for Task {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct TodoList {
     pub tasks: Vec<Task>,
-    pub next_id: u32,
+    pub next_id: i64,
 }
 
 impl Default for TodoList {
@@ -55,7 +56,7 @@ impl TodoList {
         self.tasks.clone()
     }
 
-    pub fn mark_done(&mut self, id: u32) -> Result<&Task, TodoError> {
+    pub fn mark_done(&mut self, id: i64) -> Result<&Task, TodoError> {
         if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
             task.done = true;
             Ok(task)
@@ -82,7 +83,7 @@ impl TodoList {
         }
     }
 
-    pub fn set_priority(&mut self, id: u32, priority: Priority) -> Result<&Task, TodoError> {
+    pub fn set_priority(&mut self, id: i64, priority: Priority) -> Result<&Task, TodoError> {
         if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
             task.priority = priority;
             Ok(task)
@@ -92,7 +93,8 @@ impl TodoList {
     }
 }
 
-#[derive(Clone, Copy, Default, Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize, Debug, PartialEq, Type)]
+#[sqlx(type_name = "TEXT")]
 pub enum Priority {
     #[default]
     Low,
