@@ -212,7 +212,7 @@ async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
 async fn toggle_done(id: i64) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     client
-        .patch(format!("http://localhost:3000/todos/tog/{id}"))
+        .patch(format!("http://localhost:3000/todos/{id}"))
         .send()
         .await?;
     Ok(())
@@ -221,7 +221,7 @@ async fn toggle_done(id: i64) -> Result<(), Box<dyn std::error::Error>> {
 async fn delete_task(id: i64) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     client
-        .patch(format!("http://localhost:3000/todos/del/{id}"))
+        .delete(format!("http://localhost:3000/todos/{id}"))
         .send()
         .await?;
     Ok(())

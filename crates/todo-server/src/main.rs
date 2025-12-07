@@ -1,6 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
+    routing::delete,
     routing::get,
     routing::patch,
 };
@@ -38,8 +39,8 @@ async fn main() {
     let state = Arc::new(AppState { pool });
     let app = Router::new()
         .route("/todos", get(list_todos).post(add_todo))
-        .route("/todos/tog/{id}", patch(toggle_done))
-        .route("/todos/del/{id}", patch(delete_task))
+        .route("/todos/{id}", patch(toggle_done))
+        .route("/todos/{id}", delete(delete_task))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
