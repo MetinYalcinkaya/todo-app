@@ -22,6 +22,12 @@ struct CreateTodo {
     text: String,
 }
 
+#[derive(Deserialize, Debug)]
+struct UpdateTodo {
+    text: Option<String>,
+    done: Option<bool>,
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -39,7 +45,7 @@ async fn main() {
     let state = Arc::new(AppState { pool });
     let app = Router::new()
         .route("/todos", get(list_todos).post(add_todo))
-        .route("/todos/{id}", patch(toggle_done))
+        .route("/todos/{id}", patch(update_task))
         .route("/todos/{id}", delete(delete_task))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
@@ -92,4 +98,24 @@ async fn delete_task(State(state): State<Arc<AppState>>, Path(id): Path<i64>) {
         .execute(&state.pool)
         .await
         .unwrap();
+}
+
+#[instrument(skip(state))]
+async fn update_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(payload): Json<UpdateTodo>,
+) {
+    info!("Updating task ID: {} with {:?}", id, payload);
+    // COALESCE returns first non null expression
+    // so either value from payload, or the value that's already set
+    sqlx::query!(
+        "UPDATE tasks SET text = COALESCE($1, text), done = COALESCE($2, done) WHERE id = $3",
+        payload.text,
+        payload.done,
+        id
+    )
+    .execute(&state.pool)
+    .await
+    .unwrap();
 }

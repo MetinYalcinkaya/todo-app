@@ -1,4 +1,5 @@
-use color_eyre::Result;
+use cli_log::*;
+use color_eyre::eyre::Result;
 use crossterm::event;
 use crossterm::event::{Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -6,25 +7,26 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::Alignment;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget, Wrap};
 use ratatui::{Frame, Terminal};
 use ratatui::{prelude::CrosstermBackend, widgets::ListState};
 use std::io::stdout;
 use todo_common::Task;
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Debug)]
 enum InputMode {
     #[default]
     Normal,
     Editing,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct App {
     tasks: Vec<Task>,
     state: ListState,
     input: String,
     mode: InputMode,
+    currently_editing_id: Option<i64>,
 }
 
 #[derive(serde::Serialize)]
@@ -32,9 +34,16 @@ struct CreateTodo {
     text: String,
 }
 
+#[derive(serde::Serialize)]
+struct UpdateTodo {
+    text: Option<String>,
+    done: Option<bool>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     enable_raw_mode().unwrap();
+    init_cli_log!();
     color_eyre::install()?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -61,6 +70,15 @@ async fn main() -> Result<()> {
                         Err(e) => {}
                     },
                     KeyCode::Char('i') => app.mode = InputMode::Editing,
+                    KeyCode::Char('e') => {
+                        if let Some(index) = app.state.selected()
+                            && let Some(task) = app.tasks.get(index)
+                        {
+                            app.currently_editing_id = Some(task.id);
+                            app.mode = InputMode::Editing;
+                            debug!("current editing id: {}", app.currently_editing_id.unwrap());
+                        }
+                    }
                     KeyCode::Char('d') => {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
@@ -121,8 +139,20 @@ async fn main() -> Result<()> {
                         app.input.pop();
                     }
                     KeyCode::Enter => {
+                        if app.currently_editing_id.is_some() {
+                            let task = app
+                                .tasks
+                                .iter()
+                                .find(|t| t.id == app.currently_editing_id.unwrap());
+                            let task = task.unwrap();
+                            debug!("update: {}", task);
+                            let _ = update_task(task.id, app.input.clone(), task.done).await;
+                            app.currently_editing_id = None;
+                        } else {
+                            debug!("create");
+                            let _ = create_task(app.input.clone()).await;
+                        }
                         // TODO: this is blocking, change in future
-                        let _ = create_task(app.input.clone()).await;
                         if let Ok(tasks) = fetch_tasks().await {
                             app.tasks = tasks;
                         }
@@ -184,7 +214,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
     // render footer
     let help_text = match app.mode {
         InputMode::Normal => {
-            "q: quit | <CR>: toggle done | d: delete task | i: add task | r: refresh"
+            "q: quit | <CR>: toggle done | d: delete task | i: add task | e: edit task | r: refresh"
         }
         InputMode::Editing => "Esc: exit editing mode | <CR>: Submit",
     };
@@ -195,7 +225,8 @@ fn ui(frame: &mut Frame, app: &mut App) {
 async fn fetch_tasks() -> Result<Vec<Task>, Box<dyn std::error::Error>> {
     Ok(reqwest::get("http://localhost:3000/todos")
         .await?
-        .json::<Vec<Task>>().await?)
+        .json::<Vec<Task>>()
+        .await?)
 }
 
 async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
@@ -221,6 +252,19 @@ async fn delete_task(id: i64) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     client
         .delete(format!("http://localhost:3000/todos/{id}"))
+        .send()
+        .await?;
+    Ok(())
+}
+
+async fn update_task(id: i64, text: String, done: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    client
+        .patch(format!("http://localhost:3000/todos/{id}"))
+        .json(&UpdateTodo {
+            text: Some(text),
+            done: Some(done),
+        })
         .send()
         .await?;
     Ok(())
