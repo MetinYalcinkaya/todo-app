@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
-use sqlx::Type;
 use thiserror::Error;
+
+#[cfg(feature = "backend")]
+use sqlx::Type;
 
 #[derive(Default, Clone, Deserialize, Serialize, Debug)]
 pub struct Task {
@@ -17,8 +19,9 @@ impl std::fmt::Display for Task {
     }
 }
 
-#[derive(Clone, Copy, Default, Deserialize, Serialize, Debug, PartialEq, Type)]
-#[sqlx(type_name = "TEXT")]
+#[derive(Clone, Copy, Default, Deserialize, Serialize, Debug, PartialEq)]
+#[cfg_attr(feature = "backend", derive(sqlx::Type))]
+#[cfg_attr(feature = "backend", sqlx(type_name = "TEXT"))]
 pub enum Priority {
     #[default]
     Low,

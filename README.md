@@ -1,3 +1,3 @@
-# Todo REST
+# todo server and tui
 
-Simple REST API that serves a Todo List over HTTP
+frontend and backend for todo app
