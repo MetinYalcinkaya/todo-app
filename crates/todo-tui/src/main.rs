@@ -145,8 +145,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
     // render list
 
     let list = List::new(app.tasks.iter().map(|t| t.to_listitem()))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("> ");
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
     frame.render_stateful_widget(list, chunks[LIST_INDEX], &mut app.state);
 
     // render input
@@ -201,8 +200,8 @@ impl TaskExt for Task {
         };
         let status_text = if self.done { "[x]" } else { "[ ]" };
         let line = Line::from(vec![
-            Span::styled(format!("{} ", status_text), Style::default().fg(color)),
-            Span::raw(format!("{} ", self.text)),
+            Span::styled(status_text, Style::default().fg(color)),
+            Span::raw(format!(" {} ", self.text)),
             Span::styled(
                 format!("{}", self.priority),
                 Style::default().fg(Color::Gray),
