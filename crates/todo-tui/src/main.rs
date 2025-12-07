@@ -193,10 +193,9 @@ fn ui(frame: &mut Frame, app: &mut App) {
 }
 
 async fn fetch_tasks() -> Result<Vec<Task>, Box<dyn std::error::Error>> {
-    let url = "http://localhost:3000/todos";
-
-    let tasks = reqwest::get(url).await?.json::<Vec<Task>>().await?;
-    Ok(tasks)
+    Ok(reqwest::get("http://localhost:3000/todos")
+        .await?
+        .json::<Vec<Task>>().await?)
 }
 
 async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
