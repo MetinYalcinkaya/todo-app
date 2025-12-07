@@ -2,9 +2,9 @@ use axum::{Json, Router, extract::State, routing::get};
 use serde::Deserialize;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
-use todo_common::{Priority, Task, TodoError};
+use todo_common::{Priority, Task};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, info, instrument};
+use tracing::{info, instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 struct AppState {
