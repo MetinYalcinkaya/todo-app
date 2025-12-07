@@ -7,7 +7,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::Alignment;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use ratatui::{prelude::CrosstermBackend, widgets::ListState};
 use std::io::stdout;
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
                         {
-                            let _ = toggle_done(task.id).await;
+                            let _ = update_task(task.id, None, Some(!task.done)).await;
                             if let Ok(tasks) = fetch_tasks().await {
                                 app.tasks = tasks;
                             }
@@ -146,7 +146,8 @@ async fn main() -> Result<()> {
                                 .find(|t| t.id == app.currently_editing_id.unwrap());
                             let task = task.unwrap();
                             debug!("update: {}", task);
-                            let _ = update_task(task.id, app.input.clone(), task.done).await;
+                            let _ = update_task(task.id, Some(app.input.clone()), Some(task.done))
+                                .await;
                             app.currently_editing_id = None;
                         } else {
                             debug!("create");
@@ -239,15 +240,6 @@ async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn toggle_done(id: i64) -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    client
-        .patch(format!("http://localhost:3000/todos/{id}"))
-        .send()
-        .await?;
-    Ok(())
-}
-
 async fn delete_task(id: i64) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     client
@@ -257,14 +249,15 @@ async fn delete_task(id: i64) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn update_task(id: i64, text: String, done: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn update_task(
+    id: i64,
+    text: Option<String>,
+    done: Option<bool>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     client
         .patch(format!("http://localhost:3000/todos/{id}"))
-        .json(&UpdateTodo {
-            text: Some(text),
-            done: Some(done),
-        })
+        .json(&UpdateTodo { text, done })
         .send()
         .await?;
     Ok(())

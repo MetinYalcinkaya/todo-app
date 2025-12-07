@@ -50,8 +50,6 @@ async fn main() {
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
-    // .patch(format!("http://localhost:3000/todos/tog/{id}"))
-
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -77,15 +75,6 @@ async fn add_todo(State(state): State<Arc<AppState>>, Json(payload): Json<Create
     info!("Adding task to database: {}", payload.text);
     sqlx::query(sql)
         .bind(payload.text)
-        .execute(&state.pool)
-        .await
-        .unwrap();
-}
-
-#[instrument(skip(state))]
-async fn toggle_done(State(state): State<Arc<AppState>>, Path(id): Path<i64>) {
-    info!("Toggling task ID: {}", id);
-    sqlx::query!("UPDATE tasks SET done = NOT done WHERE id = $1", id)
         .execute(&state.pool)
         .await
         .unwrap();
