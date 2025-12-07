@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
                         {
-                            let _ = toggle_todo(task.id).await;
+                            let _ = toggle_done(task.id).await;
                             if let Ok(tasks) = fetch_tasks().await {
                                 app.tasks = tasks;
                             }
@@ -197,7 +197,7 @@ async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn toggle_todo(id: i64) -> Result<(), Box<dyn std::error::Error>> {
+async fn toggle_done(id: i64) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     client
         .patch(format!("http://localhost:3000/todos/{id}"))

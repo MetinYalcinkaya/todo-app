@@ -38,7 +38,7 @@ async fn main() {
     let state = Arc::new(AppState { pool });
     let app = Router::new()
         .route("/todos", get(list_todos).post(add_todo))
-        .route("/todos/{id}", patch(toggle_todo))
+        .route("/todos/{id}", patch(toggle_done))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
@@ -73,7 +73,7 @@ async fn add_todo(State(state): State<Arc<AppState>>, Json(payload): Json<Create
 }
 
 #[instrument(skip(state))]
-async fn toggle_todo(State(state): State<Arc<AppState>>, Path(id): Path<i64>) {
+async fn toggle_done(State(state): State<Arc<AppState>>, Path(id): Path<i64>) {
     info!("Toggling task ID: {}", id);
     sqlx::query!("UPDATE tasks SET done = NOT done WHERE id = $1", id)
         .execute(&state.pool)
