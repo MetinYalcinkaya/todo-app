@@ -1,3 +1,3 @@
-# todo server and tui
+# todo app
 
-frontend and backend for todo app
+an async server and frontend for making todo lists
