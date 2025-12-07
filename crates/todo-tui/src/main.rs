@@ -61,6 +61,16 @@ async fn main() -> Result<()> {
                         Err(e) => {}
                     },
                     KeyCode::Char('i') => app.mode = InputMode::Editing,
+                    KeyCode::Enter => {
+                        let id = match app.state.selected() {
+                            Some(id) => id as i64 + 1,
+                            None => 0,
+                        };
+                        let _ = toggle_todo(id).await;
+                        if let Ok(tasks) = fetch_tasks().await {
+                            app.tasks = tasks;
+                        }
+                    }
                     KeyCode::Up | KeyCode::Char('k') => {
                         let i = match app.state.selected() {
                             Some(i) => {
@@ -163,8 +173,8 @@ fn ui(frame: &mut Frame, app: &mut App) {
 
     // render footer
     let help_text = match app.mode {
-        InputMode::Normal => "q: quit | i: add task | r: refresh",
-        InputMode::Editing => "Esc: exit editing mode | Enter: Submit",
+        InputMode::Normal => "q: quit | <CR>: toggle done | i: add task | r: refresh",
+        InputMode::Editing => "Esc: exit editing mode | <CR>: Submit",
     };
     let footer = Paragraph::new(help_text).alignment(Alignment::Center);
     frame.render_widget(footer, chunks[FOOTER_INDEX]);
@@ -182,6 +192,15 @@ async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
     client
         .post("http://localhost:3000/todos")
         .json(&CreateTodo { text })
+        .send()
+        .await?;
+    Ok(())
+}
+
+async fn toggle_todo(id: i64) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    client
+        .patch(format!("http://localhost:3000/todos/{id}"))
         .send()
         .await?;
     Ok(())
