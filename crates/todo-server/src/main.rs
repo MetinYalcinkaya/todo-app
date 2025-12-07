@@ -1,4 +1,9 @@
-use axum::{Json, Router, extract::State, routing::get};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    routing::get,
+    routing::patch,
+};
 use serde::Deserialize;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
@@ -33,6 +38,7 @@ async fn main() {
     let state = Arc::new(AppState { pool });
     let app = Router::new()
         .route("/todos", get(list_todos).post(add_todo))
+        .route("/todos/{id}", patch(toggle_todo))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
@@ -61,6 +67,15 @@ async fn add_todo(State(state): State<Arc<AppState>>, Json(payload): Json<Create
     info!("Adding task to database: {}", payload.text);
     sqlx::query(sql)
         .bind(payload.text)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}
+
+#[instrument(skip(state))]
+async fn toggle_todo(State(state): State<Arc<AppState>>, Path(id): Path<i64>) {
+    info!("Toggling task ID: {}", id);
+    sqlx::query!("UPDATE tasks SET done = NOT done WHERE id = $1", id)
         .execute(&state.pool)
         .await
         .unwrap();
