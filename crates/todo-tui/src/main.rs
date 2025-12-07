@@ -62,13 +62,13 @@ async fn main() -> Result<()> {
                     },
                     KeyCode::Char('i') => app.mode = InputMode::Editing,
                     KeyCode::Enter => {
-                        let id = match app.state.selected() {
-                            Some(id) => id as i64 + 1,
-                            None => 0,
-                        };
-                        let _ = toggle_todo(id).await;
-                        if let Ok(tasks) = fetch_tasks().await {
-                            app.tasks = tasks;
+                        if let Some(index) = app.state.selected()
+                            && let Some(task) = app.tasks.get(index)
+                        {
+                            let _ = toggle_todo(task.id).await;
+                            if let Ok(tasks) = fetch_tasks().await {
+                                app.tasks = tasks;
+                            }
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
