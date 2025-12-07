@@ -38,9 +38,12 @@ async fn main() {
     let state = Arc::new(AppState { pool });
     let app = Router::new()
         .route("/todos", get(list_todos).post(add_todo))
-        .route("/todos/{id}", patch(toggle_done))
+        .route("/todos/tog/{id}", patch(toggle_done))
+        .route("/todos/del/{id}", patch(delete_task))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
+
+    // .patch(format!("http://localhost:3000/todos/tog/{id}"))
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -76,6 +79,15 @@ async fn add_todo(State(state): State<Arc<AppState>>, Json(payload): Json<Create
 async fn toggle_done(State(state): State<Arc<AppState>>, Path(id): Path<i64>) {
     info!("Toggling task ID: {}", id);
     sqlx::query!("UPDATE tasks SET done = NOT done WHERE id = $1", id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+}
+
+#[instrument(skip(state))]
+async fn delete_task(State(state): State<Arc<AppState>>, Path(id): Path<i64>) {
+    info!("Deleting task ID: {}", id);
+    sqlx::query!("DELETE FROM tasks WHERE id = $1", id)
         .execute(&state.pool)
         .await
         .unwrap();

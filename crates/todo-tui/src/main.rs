@@ -61,6 +61,16 @@ async fn main() -> Result<()> {
                         Err(e) => {}
                     },
                     KeyCode::Char('i') => app.mode = InputMode::Editing,
+                    KeyCode::Char('d') => {
+                        if let Some(index) = app.state.selected()
+                            && let Some(task) = app.tasks.get(index)
+                        {
+                            let _ = delete_task(task.id).await;
+                            if let Ok(tasks) = fetch_tasks().await {
+                                app.tasks = tasks;
+                            }
+                        }
+                    }
                     KeyCode::Enter => {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
@@ -173,7 +183,9 @@ fn ui(frame: &mut Frame, app: &mut App) {
 
     // render footer
     let help_text = match app.mode {
-        InputMode::Normal => "q: quit | <CR>: toggle done | i: add task | r: refresh",
+        InputMode::Normal => {
+            "q: quit | <CR>: toggle done | d: delete task | i: add task | r: refresh"
+        }
         InputMode::Editing => "Esc: exit editing mode | <CR>: Submit",
     };
     let footer = Paragraph::new(help_text).alignment(Alignment::Center);
@@ -200,7 +212,16 @@ async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
 async fn toggle_done(id: i64) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     client
-        .patch(format!("http://localhost:3000/todos/{id}"))
+        .patch(format!("http://localhost:3000/todos/tog/{id}"))
+        .send()
+        .await?;
+    Ok(())
+}
+
+async fn delete_task(id: i64) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    client
+        .patch(format!("http://localhost:3000/todos/del/{id}"))
         .send()
         .await?;
     Ok(())
