@@ -4,18 +4,32 @@ use crossterm::event::{Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::Alignment;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span, Text, ToSpan};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use ratatui::{prelude::CrosstermBackend, widgets::ListState};
 use std::io::stdout;
 use todo_common::Task;
 
+#[derive(Default, PartialEq)]
+enum InputMode {
+    #[default]
+    Normal,
+    Editing,
+}
+
 #[derive(Default)]
 struct App {
     tasks: Vec<Task>,
     state: ListState,
+    input: String,
+    mode: InputMode,
+}
+
+#[derive(serde::Serialize)]
+struct CreateTodo {
+    text: String,
 }
 
 #[tokio::main]
@@ -39,13 +53,65 @@ async fn main() -> Result<()> {
         if event::poll(std::time::Duration::from_millis(50))?
             && let Event::Key(key) = event::read()?
         {
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Char('r') => match fetch_tasks().await {
-                    Ok(tasks) => app.tasks = tasks,
-                    Err(e) => {}
+            match app.mode {
+                InputMode::Normal => match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Char('r') => match fetch_tasks().await {
+                        Ok(tasks) => app.tasks = tasks,
+                        Err(e) => {}
+                    },
+                    KeyCode::Char('i') => app.mode = InputMode::Editing,
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let i = match app.state.selected() {
+                            Some(i) => {
+                                if i == 0 {
+                                    app.tasks.len() - 1
+                                } else {
+                                    i - 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        app.state.select(Some(i));
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let i = match app.state.selected() {
+                            Some(i) => {
+                                if i >= app.tasks.len() - 1 {
+                                    0
+                                } else {
+                                    i + 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        app.state.select(Some(i));
+                    }
+                    _ => {}
                 },
-                _ => {}
+                InputMode::Editing => match key.code {
+                    KeyCode::Esc => {
+                        app.mode = InputMode::Normal;
+                        app.input.clear(); // clear buf
+                    }
+                    KeyCode::Char(c) => {
+                        app.input.push(c);
+                    }
+                    KeyCode::Backspace => {
+                        app.input.pop();
+                    }
+                    KeyCode::Enter => {
+                        // TODO: this is blocking, change in future
+                        let _ = create_task(app.input.clone()).await;
+                        if let Ok(tasks) = fetch_tasks().await {
+                            app.tasks = tasks;
+                        }
+                        // reset state
+                        app.input.clear();
+                        app.mode = InputMode::Normal;
+                    }
+                    _ => {}
+                },
             }
         }
     }
@@ -53,29 +119,56 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn ui(frame: &mut Frame, app: &App) {
+const TITLE_INDEX: usize = 0;
+const LIST_INDEX: usize = 1;
+const INPUT_INDEX: usize = 2;
+const FOOTER_INDEX: usize = 3;
+
+fn ui(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(3),
+            Constraint::Length(1), // title
+            Constraint::Min(1),    // list
+            Constraint::Length(3), // input
+            Constraint::Length(1), // footer
         ])
         .split(frame.area());
 
-    // let title_block = Block::default()
-    //     .borders(Borders::ALL)
-    //     .style(Style::default());
+    // render title
 
     let title = Paragraph::new(Text::styled("todo", Style::default().fg(Color::LightBlue)))
         .alignment(Alignment::Center);
-    // .block(title_block);
 
-    frame.render_widget(title, chunks[0]);
+    frame.render_widget(title, chunks[TITLE_INDEX]);
 
-    // render todos
-    let list = List::new(app.tasks.iter().map(|t| t.to_listitem()));
-    frame.render_widget(list, chunks[1]);
+    // render list
+
+    let list = List::new(app.tasks.iter().map(|t| t.to_listitem()))
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(list, chunks[LIST_INDEX], &mut app.state);
+
+    // render input
+    let input_block = Block::default().borders(Borders::ALL).title("Add Task");
+    let style = match app.mode {
+        InputMode::Normal => Style::default().fg(Color::DarkGray),
+        InputMode::Editing => Style::default().fg(Color::Yellow),
+    };
+
+    let input = Paragraph::new(app.input.as_str())
+        .style(style)
+        .block(input_block);
+
+    frame.render_widget(input, chunks[INPUT_INDEX]);
+
+    // render footer
+    let help_text = match app.mode {
+        InputMode::Normal => "q: quit | i: add task | r: refresh",
+        InputMode::Editing => "Esc: exit editing mode | Enter: Submit",
+    };
+    let footer = Paragraph::new(help_text).alignment(Alignment::Center);
+    frame.render_widget(footer, chunks[FOOTER_INDEX]);
 }
 
 async fn fetch_tasks() -> Result<Vec<Task>, Box<dyn std::error::Error>> {
@@ -85,12 +178,22 @@ async fn fetch_tasks() -> Result<Vec<Task>, Box<dyn std::error::Error>> {
     Ok(tasks)
 }
 
+async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    client
+        .post("http://localhost:3000/todos")
+        .json(&CreateTodo { text })
+        .send()
+        .await?;
+    Ok(())
+}
+
 trait TaskExt {
-    fn to_listitem(&self) -> ListItem;
+    fn to_listitem(&'_ self) -> ListItem<'_>;
 }
 
 impl TaskExt for Task {
-    fn to_listitem(&self) -> ListItem {
+    fn to_listitem(&'_ self) -> ListItem<'_> {
         let color = if self.done {
             Color::Green
         } else {
