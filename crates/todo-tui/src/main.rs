@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
                         {
                             app.currently_editing_id = Some(task.id);
                             app.mode = InputMode::Editing;
+                            app.input.push_str(&task.text); // append task text
                             debug!("current editing id: {}", app.currently_editing_id.unwrap());
                         }
                     }
