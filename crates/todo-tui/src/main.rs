@@ -12,12 +12,28 @@ use ratatui::{Frame, Terminal};
 use ratatui::{prelude::CrosstermBackend, widgets::ListState};
 use std::io::stdout;
 use todo_common::Task;
+use tokio::sync::mpsc;
 
 #[derive(Default, PartialEq, Debug)]
 enum InputMode {
     #[default]
     Normal,
     Editing,
+}
+
+enum Action {
+    Fetch,
+    Create(String),
+    Delete(i64),
+    Update(i64, Option<String>, Option<bool>),
+}
+
+enum TuiEvent {
+    TasksFetched(Vec<Task>),
+    TaskCreated,
+    TaskDeleted,
+    TaskUpdated,
+    Error(String),
 }
 
 #[derive(Default, Debug)]
@@ -42,6 +58,25 @@ struct UpdateTodo {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let (action_tx, mut action_rx) = mpsc::unbounded_channel();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        while let Some(action) = action_rx.recv().await {
+            match action {
+                Action::Fetch => match fetch_tasks().await {
+                    Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
+                    Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
+                },
+                Action::Create(text) => match create_task(text).await {
+                    Ok(_) => event_tx.send(TuiEvent::TaskCreated).unwrap(),
+                    Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
+                },
+                Action::Delete(_) => todo!(),
+                Action::Update(_, _, _) => todo!(),
+            }
+        }
+    });
+
     enable_raw_mode().unwrap();
     init_cli_log!();
     color_eyre::install()?;
@@ -57,6 +92,15 @@ async fn main() -> Result<()> {
     };
 
     loop {
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                TuiEvent::TasksFetched(tasks) => app.tasks = tasks,
+                TuiEvent::TaskCreated => info!("task created"),
+                TuiEvent::TaskDeleted => todo!(),
+                TuiEvent::TaskUpdated => todo!(),
+                TuiEvent::Error(msg) => error!("error receiving event: {}", msg),
+            }
+        }
         terminal.draw(|f| ui(f, &mut app))?;
 
         if event::poll(std::time::Duration::from_millis(50))?
@@ -65,10 +109,9 @@ async fn main() -> Result<()> {
             match app.mode {
                 InputMode::Normal => match key.code {
                     KeyCode::Char('q') => break,
-                    KeyCode::Char('r') => match fetch_tasks().await {
-                        Ok(tasks) => app.tasks = tasks,
-                        Err(e) => {}
-                    },
+                    KeyCode::Char('r') => {
+                        action_tx.send(Action::Fetch)?;
+                    }
                     KeyCode::Char('i') => app.mode = InputMode::Editing,
                     KeyCode::Char('e') => {
                         if let Some(index) = app.state.selected()
@@ -152,12 +195,12 @@ async fn main() -> Result<()> {
                             app.currently_editing_id = None;
                         } else {
                             debug!("create");
-                            let _ = create_task(app.input.clone()).await;
+                            match action_tx.send(Action::Create(app.input.clone())) {
+                                Ok(_) => info!("added task"),
+                                Err(_) => todo!(),
+                            }
                         }
-                        // TODO: this is blocking, change in future
-                        if let Ok(tasks) = fetch_tasks().await {
-                            app.tasks = tasks;
-                        }
+                        let _ = action_tx.send(Action::Fetch);
                         // reset state
                         app.input.clear();
                         app.mode = InputMode::Normal;
