@@ -144,25 +144,18 @@ async fn main() -> Result<()> {
                     KeyCode::Char('d') => {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
+                            && let Err(e) = action_tx.send(Action::Delete(task.id))
                         {
-                            match action_tx.send(Action::Delete(task.id)) {
-                                Ok(_) => info!("task deleted"),
-                                Err(_) => todo!(),
-                            }
-                            let _ = delete_task(task.id).await;
-                            if let Ok(tasks) = fetch_tasks().await {
-                                app.tasks = tasks;
-                            }
+                            error!("failed to send delete action: {}", e);
                         }
                     }
                     KeyCode::Enter => {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
+                            && let Err(e) =
+                                action_tx.send(Action::Update(task.id, None, Some(!task.done)))
                         {
-                            match action_tx.send(Action::Update(task.id, None, Some(!task.done))) {
-                                Ok(_) => info!("toggled done on task"),
-                                Err(_) => todo!(),
-                            }
+                            error!("failed to send toggle (update) action: {}", e);
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
@@ -212,20 +205,18 @@ async fn main() -> Result<()> {
                                 .find(|t| t.id == app.currently_editing_id.unwrap());
                             let task = task.unwrap();
                             debug!("update: {}", task);
-                            match action_tx.send(Action::Update(
+                            if let Err(e) = action_tx.send(Action::Update(
                                 task.id,
                                 Some(app.input.clone()),
                                 Some(task.done),
                             )) {
-                                Ok(_) => info!("updated task"),
-                                Err(_) => todo!(),
+                                error!("failed to send update action: {}", e);
                             }
                             app.currently_editing_id = None;
                         } else {
                             debug!("create");
-                            match action_tx.send(Action::Create(app.input.clone())) {
-                                Ok(_) => info!("added task"),
-                                Err(_) => todo!(),
+                            if let Err(e) = action_tx.send(Action::Create(app.input.clone())) {
+                                error!("failed to send create action: {}", e);
                             }
                         }
                         // reset state
