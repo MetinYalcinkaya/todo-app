@@ -37,13 +37,16 @@ enum TuiEvent {
 #[derive(Default, Debug)]
 struct App {
     tasks: Vec<Task>,
-    state: ListState,
+    todo_state: ListState,
+    help_state: ListState,
+    filter_state: ListState,
     input: String,
     mode: InputMode,
     filter: Filter,
-    previous_selected: Option<usize>,
     currently_editing_id: Option<i64>,
     priority: Priority,
+    help_size: usize,
+    help_mode: InputMode,
 }
 
 #[derive(serde::Serialize)]
@@ -139,7 +142,7 @@ async fn main() -> Result<()> {
                     }
                     KeyCode::Char('i') => app.mode = InputMode::Editing,
                     KeyCode::Char('e') => {
-                        if let Some(index) = app.state.selected()
+                        if let Some(index) = app.todo_state.selected()
                             && let Some(task) = app.tasks.get(index)
                         {
                             app.currently_editing_id = Some(task.id);
@@ -149,7 +152,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     KeyCode::Char('d') => {
-                        if let Some(index) = app.state.selected()
+                        if let Some(index) = app.todo_state.selected()
                             && let Some(task) = app.tasks.get(index)
                             && let Err(e) = action_tx.send(Action::Delete(task.id, app.filter))
                         {
@@ -158,11 +161,11 @@ async fn main() -> Result<()> {
                     }
                     KeyCode::Char('f') => {
                         app.mode = InputMode::Filter;
-                        app.previous_selected = app.state.selected();
-                        app.state.select(Some(0));
+                        app.filter_state.select(Some(0));
+                    }
                     }
                     KeyCode::Enter => {
-                        if let Some(index) = app.state.selected()
+                        if let Some(index) = app.todo_state.selected()
                             && let Some(task) = app.tasks.get(index)
                             && let Err(e) = action_tx.send(Action::Update(
                                 task.id,
@@ -176,7 +179,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
-                        let i = match app.state.selected() {
+                        let i = match app.todo_state.selected() {
                             Some(i) => {
                                 if i == 0 {
                                     app.tasks.len() - 1
@@ -186,10 +189,10 @@ async fn main() -> Result<()> {
                             }
                             None => 0,
                         };
-                        app.state.select(Some(i));
+                        app.todo_state.select(Some(i));
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        let i = match app.state.selected() {
+                        let i = match app.todo_state.selected() {
                             Some(i) => {
                                 if i >= app.tasks.len() - 1 {
                                     0
@@ -199,11 +202,11 @@ async fn main() -> Result<()> {
                             }
                             None => 0,
                         };
-                        app.state.select(Some(i));
+                        app.todo_state.select(Some(i));
                     }
                     KeyCode::Left => {
                         debug!("lower priority");
-                        if let Some(index) = app.state.selected()
+                        if let Some(index) = app.todo_state.selected()
                             && let Some(task) = app.tasks.get(index)
                         {
                             let new_prio = match task.priority {
@@ -225,7 +228,7 @@ async fn main() -> Result<()> {
                     }
                     KeyCode::Right => {
                         debug!("increase priority");
-                        if let Some(index) = app.state.selected()
+                        if let Some(index) = app.todo_state.selected()
                             && let Some(task) = app.tasks.get(index)
                         {
                             let new_prio = match task.priority {
@@ -293,11 +296,9 @@ async fn main() -> Result<()> {
                 InputMode::Filter => match key.code {
                     KeyCode::Esc => {
                         app.mode = InputMode::Normal;
-                        app.input.clear(); // clear buf
-                        app.state.select(app.previous_selected);
                     }
                     KeyCode::Enter => {
-                        if let Some(index) = app.state.selected()
+                        if let Some(index) = app.filter_state.selected()
                             && let Some(filter) = get_menu_filters(app.priority).get(index)
                         {
                             debug!("setting filter to {filter}");
@@ -308,11 +309,10 @@ async fn main() -> Result<()> {
                             }
                         }
                         app.mode = InputMode::Normal;
-                        app.state.select(app.previous_selected);
                         debug!("{}", app.filter);
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
-                        let i = match app.state.selected() {
+                        let i = match app.filter_state.selected() {
                             Some(i) => {
                                 if i == 0 {
                                     get_menu_filters(app.priority).len() - 1
@@ -322,12 +322,11 @@ async fn main() -> Result<()> {
                             }
                             None => 0,
                         };
-                        app.state.select(Some(i));
+                        app.filter_state.select(Some(i));
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        let i = match app.state.selected() {
+                        let i = match app.filter_state.selected() {
                             Some(i) => {
-                                // if i >= Filter::iter().count() - 1 {
                                 if i >= get_menu_filters(app.priority).len() - 1 {
                                     0
                                 } else {
@@ -336,11 +335,10 @@ async fn main() -> Result<()> {
                             }
                             None => 0,
                         };
-                        app.state.select(Some(i));
+                        app.filter_state.select(Some(i));
                     }
-                    KeyCode::Left => {
-                        if let Some(index) = app.state.selected()
-                            // && let Some(filter) = Filter::iter().get(index)
+                    KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let Some(index) = app.filter_state.selected()
                             && let Some(filter) = get_menu_filters(app.priority).get(index)
                             && let Filter::Priority(priority) = filter
                         {
@@ -352,9 +350,8 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    KeyCode::Right => {
-                        if let Some(index) = app.state.selected()
-                            // && let Some(filter) = Filter::iter().get(index)
+                    KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let Some(index) = app.filter_state.selected()
                             && let Some(filter) = get_menu_filters(app.priority).get(index)
                             && let Filter::Priority(priority) = filter
                         {
@@ -410,7 +407,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
     if app.mode == InputMode::Filter {
         frame.render_widget(list, chunks[LIST_INDEX]);
     } else {
-        frame.render_stateful_widget(list, chunks[LIST_INDEX], &mut app.state);
+        frame.render_stateful_widget(list, chunks[LIST_INDEX], &mut app.todo_state);
     }
 
     // render input
@@ -440,7 +437,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
                 .block(filter_block);
             let area = popup_area(chunks[LIST_INDEX], 15, 6);
-            frame.render_stateful_widget(input, area, &mut app.state);
+            frame.render_stateful_widget(input, area, &mut app.filter_state);
         }
     }
 
