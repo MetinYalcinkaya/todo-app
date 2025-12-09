@@ -1,6 +1,6 @@
 use cli_log::{debug, error, init_cli_log};
 use color_eyre::eyre::Result;
-use crossterm::event;
+use crossterm::event::{self, KeyModifiers};
 use crossterm::event::{Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Constraint, Direction, Flex, Layout, Rect};
@@ -20,6 +20,7 @@ enum InputMode {
     Normal,
     Editing,
     Filter,
+    Help,
 }
 
 enum Action {
@@ -38,7 +39,6 @@ enum TuiEvent {
 struct App {
     tasks: Vec<Task>,
     todo_state: ListState,
-    help_state: ListState,
     filter_state: ListState,
     input: String,
     mode: InputMode,
@@ -163,6 +163,8 @@ async fn main() -> Result<()> {
                         app.mode = InputMode::Filter;
                         app.filter_state.select(Some(0));
                     }
+                    KeyCode::Char('h') => {
+                        app.mode = InputMode::Help;
                     }
                     KeyCode::Enter => {
                         if let Some(index) = app.todo_state.selected()
@@ -365,6 +367,22 @@ async fn main() -> Result<()> {
                     }
                     _ => {}
                 },
+                InputMode::Help => match key.code {
+                    KeyCode::Esc => app.mode = InputMode::Normal,
+                    KeyCode::Left | KeyCode::Char('h') => match app.help_mode {
+                        InputMode::Normal => app.help_mode = InputMode::Help,
+                        InputMode::Editing => app.help_mode = InputMode::Normal,
+                        InputMode::Filter => app.help_mode = InputMode::Editing,
+                        InputMode::Help => app.help_mode = InputMode::Filter,
+                    },
+                    KeyCode::Right | KeyCode::Char('l') => match app.help_mode {
+                        InputMode::Normal => app.help_mode = InputMode::Editing,
+                        InputMode::Editing => app.help_mode = InputMode::Filter,
+                        InputMode::Filter => app.help_mode = InputMode::Help,
+                        InputMode::Help => app.help_mode = InputMode::Normal,
+                    },
+                    _ => {}
+                },
             }
         }
     }
@@ -374,7 +392,6 @@ async fn main() -> Result<()> {
 
 const TITLE_INDEX: usize = 0;
 const LIST_INDEX: usize = 1;
-const FOOTER_INDEX: usize = 2;
 
 fn ui(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
@@ -382,7 +399,6 @@ fn ui(frame: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(1), // title
             Constraint::Min(1),    // list
-            Constraint::Length(1), // footer
         ])
         .split(frame.area());
 
@@ -404,7 +420,9 @@ fn ui(frame: &mut Frame, app: &mut App) {
     let list = List::new(app.tasks.iter().map(|t| t.to_listitem()))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .block(list_block);
-    if app.mode == InputMode::Filter {
+
+    // swap to regular widget when in Filter or Help modes
+    if app.mode == InputMode::Filter || app.mode == InputMode::Help {
         frame.render_widget(list, chunks[LIST_INDEX]);
     } else {
         frame.render_stateful_widget(list, chunks[LIST_INDEX], &mut app.todo_state);
@@ -413,7 +431,6 @@ fn ui(frame: &mut Frame, app: &mut App) {
     // render input
 
     match app.mode {
-        InputMode::Normal => {}
         InputMode::Editing => {
             let input_block = Block::default().borders(Borders::ALL).title("Add Task");
             let input_style = Style::default().fg(Color::Yellow);
@@ -439,19 +456,55 @@ fn ui(frame: &mut Frame, app: &mut App) {
             let area = popup_area(chunks[LIST_INDEX], 15, 6);
             frame.render_stateful_widget(input, area, &mut app.filter_state);
         }
-    }
+        InputMode::Help => {
+            let help_block = Block::default()
+                .borders(Borders::ALL)
+                .title_alignment(Alignment::Center)
+                .title(format!(" <- {:?} mode keys -> ", app.help_mode));
+            let help_style = Style::default().fg(Color::Green);
 
-    // render footer
+            // keymap vecs
+            let help_normal_keys = [
+                "q: quit",
+                "<CR>: toggle done",
+                "d: delete task",
+                "i: add task",
+                "e: edit task",
+                "r: refresh",
+                "ctrl+x/a: decrease/increase priority",
+            ];
+            let help_editing_keys = ["esc: exit editing mode", "<CR>: submit"];
+            let help_filter_keys = [
+                "esc: exit filter mode",
+                "ctrl+x/a: decrease/increase priority",
+                "<CR>: filter",
+            ];
+            let help_help_keys = ["[left][h]/[right][l]: navigate help", "esc: exit help mode"];
 
-    let help_text = match app.mode {
-        InputMode::Normal => {
-            "q: quit | <CR>: toggle done | d: delete task | i: add task | e: edit task | r: refresh"
+            let keys: &[&str] = match app.help_mode {
+                InputMode::Normal => &help_normal_keys,
+                InputMode::Editing => &help_editing_keys,
+                InputMode::Filter => &help_filter_keys,
+                InputMode::Help => &help_help_keys,
+            };
+
+            app.help_size = keys.len();
+
+            // +4 for borders and titles
+            let help_menu_width = (keys.iter().map(|s| s.len()).max().unwrap_or(30) as u16) + 5;
+            let help_menu_length = (keys.len() as u16) + 2;
+
+            let help = List::new(keys.iter().copied())
+                .block(help_block)
+                .style(help_style);
+
+            let area = popup_area(chunks[LIST_INDEX], help_menu_width, help_menu_length);
+
+            frame.render_widget(Clear, area);
+            frame.render_widget(help, area);
         }
-        InputMode::Editing => "esc: exit editing mode | <CR>: submit",
-        InputMode::Filter => "esc: exit filter mode | left/right: change priority | <CR>: filter",
-    };
-    let footer = Paragraph::new(help_text).alignment(Alignment::Center);
-    frame.render_widget(footer, chunks[FOOTER_INDEX]);
+        _ => {}
+    }
 }
 
 fn get_menu_filters(cur_priority: Priority) -> Vec<Filter> {
@@ -463,9 +516,9 @@ fn get_menu_filters(cur_priority: Priority) -> Vec<Filter> {
     ]
 }
 
-fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
-    let vertical = Layout::vertical([Constraint::Length(percent_y)]).flex(Flex::Center);
-    let horizontal = Layout::horizontal([Constraint::Length(percent_x)]).flex(Flex::Center);
+fn popup_area(area: Rect, px_x: u16, px_y: u16) -> Rect {
+    let vertical = Layout::vertical([Constraint::Length(px_y)]).flex(Flex::Center);
+    let horizontal = Layout::horizontal([Constraint::Length(px_x)]).flex(Flex::Center);
     let [area] = vertical.areas(area);
     let [area] = horizontal.areas(area);
     area
