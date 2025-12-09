@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use ratatui::{prelude::CrosstermBackend, widgets::ListState};
 use std::io::stdout;
-use todo_common::Task;
+use todo_common::{Priority, Task};
 use tokio::sync::mpsc;
 
 #[derive(Default, PartialEq, Debug)]
@@ -25,7 +25,7 @@ enum Action {
     Fetch,
     Create(String),
     Delete(i64),
-    Update(i64, Option<String>, Option<bool>),
+    Update(i64, Option<String>, Option<bool>, Option<Priority>),
 }
 
 enum TuiEvent {
@@ -51,6 +51,7 @@ struct CreateTodo {
 struct UpdateTodo {
     text: Option<String>,
     done: Option<bool>,
+    priority: Option<Priority>,
 }
 
 #[tokio::main]
@@ -85,8 +86,8 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                Action::Update(id, text, done) => {
-                    if let Err(e) = update_task(id, text, done).await {
+                Action::Update(id, text, done, priority) => {
+                    if let Err(e) = update_task(id, text, done, priority).await {
                         event_tx.send(TuiEvent::Error(e.to_string())).unwrap();
                     } else {
                         match fetch_tasks().await {
@@ -153,8 +154,12 @@ async fn main() -> Result<()> {
                     KeyCode::Enter => {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
-                            && let Err(e) =
-                                action_tx.send(Action::Update(task.id, None, Some(!task.done)))
+                            && let Err(e) = action_tx.send(Action::Update(
+                                task.id,
+                                None,
+                                Some(!task.done),
+                                None,
+                            ))
                         {
                             error!("failed to send toggle (update) action: {e}");
                         }
@@ -185,6 +190,42 @@ async fn main() -> Result<()> {
                         };
                         app.state.select(Some(i));
                     }
+                    KeyCode::Left => {
+                        debug!("lower priority");
+                        if let Some(index) = app.state.selected()
+                            && let Some(task) = app.tasks.get(index)
+                        {
+                            let new_prio = match task.priority {
+                                Priority::Low => Priority::High,
+                                Priority::Medium => Priority::Low,
+                                Priority::High => Priority::Medium,
+                            };
+                            debug!("new_prio: {new_prio}");
+                            if let Err(e) =
+                                action_tx.send(Action::Update(task.id, None, None, Some(new_prio)))
+                            {
+                                error!("failed to lower priority: {e}");
+                            }
+                        }
+                    }
+                    KeyCode::Right => {
+                        debug!("increase priority");
+                        if let Some(index) = app.state.selected()
+                            && let Some(task) = app.tasks.get(index)
+                        {
+                            let new_prio = match task.priority {
+                                Priority::Low => Priority::Medium,
+                                Priority::Medium => Priority::High,
+                                Priority::High => Priority::Low,
+                            };
+                            debug!("new_prio: {new_prio}");
+                            if let Err(e) =
+                                action_tx.send(Action::Update(task.id, None, None, Some(new_prio)))
+                            {
+                                error!("failed to increase priority: {e}");
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 InputMode::Editing => match key.code {
@@ -210,6 +251,7 @@ async fn main() -> Result<()> {
                                 task.id,
                                 Some(app.input.clone()),
                                 Some(task.done),
+                                None,
                             )) {
                                 error!("failed to send update action: {e}");
                             }
@@ -258,11 +300,14 @@ fn ui(frame: &mut Frame, app: &mut App) {
 
     // render list
 
+    let list_block = Block::default().borders(Borders::ALL).title("Tasks");
     let list = List::new(app.tasks.iter().map(|t| t.to_listitem()))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .block(list_block);
     frame.render_stateful_widget(list, chunks[LIST_INDEX], &mut app.state);
 
     // render input
+
     let input_block = Block::default().borders(Borders::ALL).title("Add Task");
     let style = match app.mode {
         InputMode::Normal => Style::default().fg(Color::DarkGray),
@@ -280,7 +325,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
         InputMode::Normal => {
             "q: quit | <CR>: toggle done | d: delete task | i: add task | e: edit task | r: refresh"
         }
-        InputMode::Editing => "Esc: exit editing mode | <CR>: Submit",
+        InputMode::Editing => "esc: exit editing mode | <CR>: submit",
     };
     let footer = Paragraph::new(help_text).alignment(Alignment::Center);
     frame.render_widget(footer, chunks[FOOTER_INDEX]);
@@ -316,11 +361,16 @@ async fn update_task(
     id: i64,
     text: Option<String>,
     done: Option<bool>,
+    priority: Option<Priority>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     client
         .patch(format!("http://localhost:3000/todos/{id}"))
-        .json(&UpdateTodo { text, done })
+        .json(&UpdateTodo {
+            text,
+            done,
+            priority,
+        })
         .send()
         .await?;
     Ok(())

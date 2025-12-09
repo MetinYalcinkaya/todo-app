@@ -2486,6 +2486,7 @@ dependencies = [
  "cli-log",
  "color-eyre",
  "crossterm 0.29.0",
+ "dotenvy",
  "ratatui",
  "reqwest",
  "serde",

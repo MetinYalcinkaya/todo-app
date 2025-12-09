@@ -26,6 +26,7 @@ struct CreateTodo {
 struct UpdateTodo {
     text: Option<String>,
     done: Option<bool>,
+    priority: Option<Priority>,
 }
 
 #[tokio::main]
@@ -99,9 +100,10 @@ async fn update_task(
     // COALESCE returns first non null expression
     // so either value from payload, or the value that's already set
     sqlx::query!(
-        "UPDATE tasks SET text = COALESCE($1, text), done = COALESCE($2, done) WHERE id = $3",
+        "UPDATE tasks SET text = COALESCE($1, text), done = COALESCE($2, done), priority = COALESCE($3, priority) WHERE id = $4",
         payload.text,
         payload.done,
+        payload.priority,
         id
     )
     .execute(&state.pool)
