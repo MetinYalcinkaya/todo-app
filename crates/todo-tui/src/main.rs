@@ -55,6 +55,7 @@ struct UpdateTodo {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenvy::dotenv()?;
     let (action_tx, mut action_rx) = mpsc::unbounded_channel();
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
