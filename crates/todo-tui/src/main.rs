@@ -30,9 +30,6 @@ enum Action {
 
 enum TuiEvent {
     TasksFetched(Vec<Task>),
-    TaskCreated,
-    TaskDeleted,
-    TaskUpdated,
     Error(String),
 }
 
@@ -119,9 +116,6 @@ async fn main() -> Result<()> {
         while let Ok(event) = event_rx.try_recv() {
             match event {
                 TuiEvent::TasksFetched(tasks) => app.tasks = tasks,
-                TuiEvent::TaskCreated => info!("task created"),
-                TuiEvent::TaskDeleted => info!("task deleted"),
-                TuiEvent::TaskUpdated => info!("task updated"),
                 TuiEvent::Error(msg) => error!("event error: {}", msg),
             }
         }
