@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[cfg(feature = "backend")]
-use sqlx::Type;
-
 #[derive(Default, Clone, Deserialize, Serialize, Debug)]
 pub struct Task {
     pub id: i64,

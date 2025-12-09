@@ -1,4 +1,4 @@
-use cli_log::*;
+use cli_log::{debug, error, init_cli_log};
 use color_eyre::eyre::Result;
 use crossterm::event;
 use crossterm::event::{Event, KeyCode};
@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
         while let Ok(event) = event_rx.try_recv() {
             match event {
                 TuiEvent::TasksFetched(tasks) => app.tasks = tasks,
-                TuiEvent::Error(msg) => error!("event error: {}", msg),
+                TuiEvent::Error(msg) => error!("event error: {msg}"),
             }
         }
         terminal.draw(|f| ui(f, &mut app))?;
@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
                             && let Some(task) = app.tasks.get(index)
                             && let Err(e) = action_tx.send(Action::Delete(task.id))
                         {
-                            error!("failed to send delete action: {}", e);
+                            error!("failed to send delete action: {e}");
                         }
                     }
                     KeyCode::Enter => {
@@ -155,7 +155,7 @@ async fn main() -> Result<()> {
                             && let Err(e) =
                                 action_tx.send(Action::Update(task.id, None, Some(!task.done)))
                         {
-                            error!("failed to send toggle (update) action: {}", e);
+                            error!("failed to send toggle (update) action: {e}");
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
@@ -204,19 +204,19 @@ async fn main() -> Result<()> {
                                 .iter()
                                 .find(|t| t.id == app.currently_editing_id.unwrap());
                             let task = task.unwrap();
-                            debug!("update: {}", task);
+                            debug!("update: {task}");
                             if let Err(e) = action_tx.send(Action::Update(
                                 task.id,
                                 Some(app.input.clone()),
                                 Some(task.done),
                             )) {
-                                error!("failed to send update action: {}", e);
+                                error!("failed to send update action: {e}");
                             }
                             app.currently_editing_id = None;
                         } else {
                             debug!("create");
                             if let Err(e) = action_tx.send(Action::Create(app.input.clone())) {
-                                error!("failed to send create action: {}", e);
+                                error!("failed to send create action: {e}");
                             }
                         }
                         // reset state
