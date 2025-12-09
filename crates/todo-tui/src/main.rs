@@ -67,12 +67,36 @@ async fn main() -> Result<()> {
                     Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
                     Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
                 },
-                Action::Create(text) => match create_task(text).await {
-                    Ok(_) => event_tx.send(TuiEvent::TaskCreated).unwrap(),
-                    Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
-                },
-                Action::Delete(_) => todo!(),
-                Action::Update(_, _, _) => todo!(),
+                Action::Create(text) => {
+                    if let Err(e) = create_task(text).await {
+                        event_tx.send(TuiEvent::Error(e.to_string())).unwrap();
+                    } else {
+                        match fetch_tasks().await {
+                            Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
+                            Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
+                        }
+                    }
+                }
+                Action::Delete(id) => {
+                    if let Err(e) = delete_task(id).await {
+                        event_tx.send(TuiEvent::Error(e.to_string())).unwrap();
+                    } else {
+                        match fetch_tasks().await {
+                            Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
+                            Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
+                        }
+                    }
+                }
+                Action::Update(id, text, done) => {
+                    if let Err(e) = update_task(id, text, done).await {
+                        event_tx.send(TuiEvent::Error(e.to_string())).unwrap();
+                    } else {
+                        match fetch_tasks().await {
+                            Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
+                            Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
+                        }
+                    }
+                }
             }
         }
     });
@@ -96,9 +120,9 @@ async fn main() -> Result<()> {
             match event {
                 TuiEvent::TasksFetched(tasks) => app.tasks = tasks,
                 TuiEvent::TaskCreated => info!("task created"),
-                TuiEvent::TaskDeleted => todo!(),
-                TuiEvent::TaskUpdated => todo!(),
-                TuiEvent::Error(msg) => error!("error receiving event: {}", msg),
+                TuiEvent::TaskDeleted => info!("task deleted"),
+                TuiEvent::TaskUpdated => info!("task updated"),
+                TuiEvent::Error(msg) => error!("event error: {}", msg),
             }
         }
         terminal.draw(|f| ui(f, &mut app))?;
@@ -127,6 +151,10 @@ async fn main() -> Result<()> {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
                         {
+                            match action_tx.send(Action::Delete(task.id)) {
+                                Ok(_) => info!("task deleted"),
+                                Err(_) => todo!(),
+                            }
                             let _ = delete_task(task.id).await;
                             if let Ok(tasks) = fetch_tasks().await {
                                 app.tasks = tasks;
@@ -137,9 +165,9 @@ async fn main() -> Result<()> {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
                         {
-                            let _ = update_task(task.id, None, Some(!task.done)).await;
-                            if let Ok(tasks) = fetch_tasks().await {
-                                app.tasks = tasks;
+                            match action_tx.send(Action::Update(task.id, None, Some(!task.done))) {
+                                Ok(_) => info!("toggled done on task"),
+                                Err(_) => todo!(),
                             }
                         }
                     }
@@ -190,8 +218,14 @@ async fn main() -> Result<()> {
                                 .find(|t| t.id == app.currently_editing_id.unwrap());
                             let task = task.unwrap();
                             debug!("update: {}", task);
-                            let _ = update_task(task.id, Some(app.input.clone()), Some(task.done))
-                                .await;
+                            match action_tx.send(Action::Update(
+                                task.id,
+                                Some(app.input.clone()),
+                                Some(task.done),
+                            )) {
+                                Ok(_) => info!("updated task"),
+                                Err(_) => todo!(),
+                            }
                             app.currently_editing_id = None;
                         } else {
                             debug!("create");
@@ -200,7 +234,6 @@ async fn main() -> Result<()> {
                                 Err(_) => todo!(),
                             }
                         }
-                        let _ = action_tx.send(Action::Fetch);
                         // reset state
                         app.input.clear();
                         app.mode = InputMode::Normal;
