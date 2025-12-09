@@ -204,7 +204,7 @@ async fn main() -> Result<()> {
                         };
                         app.todo_state.select(Some(i));
                     }
-                    KeyCode::Left => {
+                    KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         debug!("lower priority");
                         if let Some(index) = app.todo_state.selected()
                             && let Some(task) = app.tasks.get(index)
@@ -226,7 +226,7 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    KeyCode::Right => {
+                    KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         debug!("increase priority");
                         if let Some(index) = app.todo_state.selected()
                             && let Some(task) = app.tasks.get(index)
