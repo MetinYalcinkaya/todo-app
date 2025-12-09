@@ -5,13 +5,13 @@ use crossterm::event::{Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Constraint, Direction, Flex, Layout, Rect};
 use ratatui::prelude::Alignment;
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use ratatui::{prelude::CrosstermBackend, widgets::ListState};
 use std::io::stdout;
-use todo_common::{Priority, Task};
+use todo_common::{Filter, Priority, Task, TaskQuery};
 use tokio::sync::mpsc;
 
 #[derive(Default, PartialEq, Debug)]
@@ -19,13 +19,14 @@ enum InputMode {
     #[default]
     Normal,
     Editing,
+    Filter,
 }
 
 enum Action {
-    Fetch,
-    Create(String),
-    Delete(i64),
-    Update(i64, Option<String>, Option<bool>, Option<Priority>),
+    Fetch(Filter),
+    Create(String, Filter),
+    Delete(i64, Filter),
+    Update(i64, Option<String>, Option<bool>, Option<Priority>, Filter),
 }
 
 enum TuiEvent {
@@ -39,7 +40,10 @@ struct App {
     state: ListState,
     input: String,
     mode: InputMode,
+    filter: Filter,
+    previous_selected: Option<usize>,
     currently_editing_id: Option<i64>,
+    priority: Priority,
 }
 
 #[derive(serde::Serialize)]
@@ -57,40 +61,48 @@ struct UpdateTodo {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv()?;
+
+    let mut app = {
+        App {
+            tasks: fetch_tasks(Filter::default()).await.unwrap_or_default(),
+            ..Default::default()
+        }
+    };
+
     let (action_tx, mut action_rx) = mpsc::unbounded_channel();
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         while let Some(action) = action_rx.recv().await {
             match action {
-                Action::Fetch => match fetch_tasks().await {
+                Action::Fetch(filter) => match fetch_tasks(filter).await {
                     Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
                     Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
                 },
-                Action::Create(text) => {
+                Action::Create(text, filter) => {
                     if let Err(e) = create_task(text).await {
                         event_tx.send(TuiEvent::Error(e.to_string())).unwrap();
                     } else {
-                        match fetch_tasks().await {
+                        match fetch_tasks(filter).await {
                             Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
                             Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
                         }
                     }
                 }
-                Action::Delete(id) => {
+                Action::Delete(id, filter) => {
                     if let Err(e) = delete_task(id).await {
                         event_tx.send(TuiEvent::Error(e.to_string())).unwrap();
                     } else {
-                        match fetch_tasks().await {
+                        match fetch_tasks(filter).await {
                             Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
                             Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
                         }
                     }
                 }
-                Action::Update(id, text, done, priority) => {
+                Action::Update(id, text, done, priority, filter) => {
                     if let Err(e) = update_task(id, text, done, priority).await {
                         event_tx.send(TuiEvent::Error(e.to_string())).unwrap();
                     } else {
-                        match fetch_tasks().await {
+                        match fetch_tasks(filter).await {
                             Ok(tasks) => event_tx.send(TuiEvent::TasksFetched(tasks)).unwrap(),
                             Err(e) => event_tx.send(TuiEvent::Error(e.to_string())).unwrap(),
                         }
@@ -106,13 +118,6 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
-
-    let mut app = {
-        App {
-            tasks: fetch_tasks().await.unwrap_or_default(),
-            ..Default::default()
-        }
-    };
 
     loop {
         while let Ok(event) = event_rx.try_recv() {
@@ -130,7 +135,7 @@ async fn main() -> Result<()> {
                 InputMode::Normal => match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Char('r') => {
-                        action_tx.send(Action::Fetch)?;
+                        action_tx.send(Action::Fetch(app.filter))?;
                     }
                     KeyCode::Char('i') => app.mode = InputMode::Editing,
                     KeyCode::Char('e') => {
@@ -146,10 +151,15 @@ async fn main() -> Result<()> {
                     KeyCode::Char('d') => {
                         if let Some(index) = app.state.selected()
                             && let Some(task) = app.tasks.get(index)
-                            && let Err(e) = action_tx.send(Action::Delete(task.id))
+                            && let Err(e) = action_tx.send(Action::Delete(task.id, app.filter))
                         {
                             error!("failed to send delete action: {e}");
                         }
+                    }
+                    KeyCode::Char('f') => {
+                        app.mode = InputMode::Filter;
+                        app.previous_selected = app.state.selected();
+                        app.state.select(Some(0));
                     }
                     KeyCode::Enter => {
                         if let Some(index) = app.state.selected()
@@ -159,6 +169,7 @@ async fn main() -> Result<()> {
                                 None,
                                 Some(!task.done),
                                 None,
+                                app.filter,
                             ))
                         {
                             error!("failed to send toggle (update) action: {e}");
@@ -201,9 +212,13 @@ async fn main() -> Result<()> {
                                 Priority::High => Priority::Medium,
                             };
                             debug!("new_prio: {new_prio}");
-                            if let Err(e) =
-                                action_tx.send(Action::Update(task.id, None, None, Some(new_prio)))
-                            {
+                            if let Err(e) = action_tx.send(Action::Update(
+                                task.id,
+                                None,
+                                None,
+                                Some(new_prio),
+                                app.filter,
+                            )) {
                                 error!("failed to lower priority: {e}");
                             }
                         }
@@ -219,9 +234,13 @@ async fn main() -> Result<()> {
                                 Priority::High => Priority::Low,
                             };
                             debug!("new_prio: {new_prio}");
-                            if let Err(e) =
-                                action_tx.send(Action::Update(task.id, None, None, Some(new_prio)))
-                            {
+                            if let Err(e) = action_tx.send(Action::Update(
+                                task.id,
+                                None,
+                                None,
+                                Some(new_prio),
+                                app.filter,
+                            )) {
                                 error!("failed to increase priority: {e}");
                             }
                         }
@@ -252,19 +271,100 @@ async fn main() -> Result<()> {
                                 Some(app.input.clone()),
                                 Some(task.done),
                                 None,
+                                app.filter,
                             )) {
                                 error!("failed to send update action: {e}");
                             }
                             app.currently_editing_id = None;
                         } else {
                             debug!("create");
-                            if let Err(e) = action_tx.send(Action::Create(app.input.clone())) {
+                            if let Err(e) =
+                                action_tx.send(Action::Create(app.input.clone(), app.filter))
+                            {
                                 error!("failed to send create action: {e}");
                             }
                         }
                         // reset state
                         app.input.clear();
                         app.mode = InputMode::Normal;
+                    }
+                    _ => {}
+                },
+                InputMode::Filter => match key.code {
+                    KeyCode::Esc => {
+                        app.mode = InputMode::Normal;
+                        app.input.clear(); // clear buf
+                        app.state.select(app.previous_selected);
+                    }
+                    KeyCode::Enter => {
+                        if let Some(index) = app.state.selected()
+                            && let Some(filter) = get_menu_filters(app.priority).get(index)
+                        {
+                            debug!("setting filter to {filter}");
+                            app.filter = *filter;
+
+                            if let Err(e) = action_tx.send(Action::Fetch(app.filter)) {
+                                error!("failed to send fetch action: {e}");
+                            }
+                        }
+                        app.mode = InputMode::Normal;
+                        app.state.select(app.previous_selected);
+                        debug!("{}", app.filter);
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let i = match app.state.selected() {
+                            Some(i) => {
+                                if i == 0 {
+                                    get_menu_filters(app.priority).len() - 1
+                                } else {
+                                    i - 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        app.state.select(Some(i));
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let i = match app.state.selected() {
+                            Some(i) => {
+                                // if i >= Filter::iter().count() - 1 {
+                                if i >= get_menu_filters(app.priority).len() - 1 {
+                                    0
+                                } else {
+                                    i + 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        app.state.select(Some(i));
+                    }
+                    KeyCode::Left => {
+                        if let Some(index) = app.state.selected()
+                            // && let Some(filter) = Filter::iter().get(index)
+                            && let Some(filter) = get_menu_filters(app.priority).get(index)
+                            && let Filter::Priority(priority) = filter
+                        {
+                            debug!("{priority}");
+                            match app.priority {
+                                Priority::Low => app.priority = Priority::High,
+                                Priority::Medium => app.priority = Priority::Low,
+                                Priority::High => app.priority = Priority::Medium,
+                            }
+                        }
+                    }
+                    KeyCode::Right => {
+                        if let Some(index) = app.state.selected()
+                            // && let Some(filter) = Filter::iter().get(index)
+                            && let Some(filter) = get_menu_filters(app.priority).get(index)
+                            && let Filter::Priority(priority) = filter
+                        {
+                            debug!("{priority}");
+                            match app.priority {
+                                Priority::Low => app.priority = Priority::Medium,
+                                Priority::Medium => app.priority = Priority::High,
+                                Priority::High => app.priority = Priority::Low,
+                            }
+                        }
                     }
                     _ => {}
                 },
@@ -298,11 +398,20 @@ fn ui(frame: &mut Frame, app: &mut App) {
 
     // render list
 
-    let list_block = Block::default().borders(Borders::ALL).title("Tasks");
+    let list_filter = match app.filter {
+        Filter::Priority(_) => format!("Priority {}", app.priority),
+        _ => app.filter.to_string(),
+    };
+    let list_title = format!("Tasks ({list_filter})");
+    let list_block = Block::default().borders(Borders::ALL).title(list_title);
     let list = List::new(app.tasks.iter().map(|t| t.to_listitem()))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .block(list_block);
-    frame.render_stateful_widget(list, chunks[LIST_INDEX], &mut app.state);
+    if app.mode == InputMode::Filter {
+        frame.render_widget(list, chunks[LIST_INDEX]);
+    } else {
+        frame.render_stateful_widget(list, chunks[LIST_INDEX], &mut app.state);
+    }
 
     // render input
 
@@ -310,46 +419,75 @@ fn ui(frame: &mut Frame, app: &mut App) {
         InputMode::Normal => {}
         InputMode::Editing => {
             let input_block = Block::default().borders(Borders::ALL).title("Add Task");
-            let style = match app.mode {
-                InputMode::Normal => Style::default().fg(Color::DarkGray),
-                InputMode::Editing => Style::default().fg(Color::Yellow),
-            };
+            let input_style = Style::default().fg(Color::Yellow);
 
-            let input = Paragraph::new(app.input.as_str().slow_blink())
-                .style(style)
-                .centered()
+            let input = Paragraph::new(app.input.as_str())
+                .style(input_style)
                 .block(input_block);
-            let area = popup_area(chunks[LIST_INDEX], 30, 30);
+            let area = popup_area(chunks[LIST_INDEX], 50, 3);
 
             frame.render_widget(Clear, area);
             frame.render_widget(input, area);
         }
+        InputMode::Filter => {
+            let filter_block = Block::default().borders(Borders::ALL).title("Filter by");
+            let filters: Vec<String> = get_menu_filters(app.priority)
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect();
+
+            let input = List::new(filters)
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .block(filter_block);
+            let area = popup_area(chunks[LIST_INDEX], 15, 6);
+            frame.render_stateful_widget(input, area, &mut app.state);
+        }
     }
 
     // render footer
+
     let help_text = match app.mode {
         InputMode::Normal => {
             "q: quit | <CR>: toggle done | d: delete task | i: add task | e: edit task | r: refresh"
         }
         InputMode::Editing => "esc: exit editing mode | <CR>: submit",
+        InputMode::Filter => "esc: exit filter mode | left/right: change priority | <CR>: filter",
     };
     let footer = Paragraph::new(help_text).alignment(Alignment::Center);
     frame.render_widget(footer, chunks[FOOTER_INDEX]);
 }
 
+fn get_menu_filters(cur_priority: Priority) -> Vec<Filter> {
+    vec![
+        Filter::All,
+        Filter::Todo,
+        Filter::Done,
+        Filter::Priority(cur_priority),
+    ]
+}
+
 fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
-    let vertical = Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center);
-    let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
+    let vertical = Layout::vertical([Constraint::Length(percent_y)]).flex(Flex::Center);
+    let horizontal = Layout::horizontal([Constraint::Length(percent_x)]).flex(Flex::Center);
     let [area] = vertical.areas(area);
     let [area] = horizontal.areas(area);
     area
 }
 
-async fn fetch_tasks() -> Result<Vec<Task>, Box<dyn std::error::Error>> {
-    Ok(reqwest::get("http://localhost:3000/todos")
+async fn fetch_tasks(filter: Filter) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
+    debug!("fetch_tasks: {filter}");
+    let params = TaskQuery::from(filter);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get("http://localhost:3000/todos")
+        .query(&params)
+        .send()
         .await?
         .json::<Vec<Task>>()
-        .await?)
+        .await?;
+
+    Ok(response)
 }
 
 async fn create_task(text: String) -> Result<(), Box<dyn std::error::Error>> {
