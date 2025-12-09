@@ -3,11 +3,11 @@ use color_eyre::eyre::Result;
 use crossterm::event;
 use crossterm::event::{Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Flex, Layout, Rect};
 use ratatui::prelude::Alignment;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use ratatui::{prelude::CrosstermBackend, widgets::ListState};
 use std::io::stdout;
@@ -277,8 +277,7 @@ async fn main() -> Result<()> {
 
 const TITLE_INDEX: usize = 0;
 const LIST_INDEX: usize = 1;
-const INPUT_INDEX: usize = 2;
-const FOOTER_INDEX: usize = 3;
+const FOOTER_INDEX: usize = 2;
 
 fn ui(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
@@ -286,7 +285,6 @@ fn ui(frame: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(1), // title
             Constraint::Min(1),    // list
-            Constraint::Length(3), // input
             Constraint::Length(1), // footer
         ])
         .split(frame.area());
@@ -308,17 +306,25 @@ fn ui(frame: &mut Frame, app: &mut App) {
 
     // render input
 
-    let input_block = Block::default().borders(Borders::ALL).title("Add Task");
-    let style = match app.mode {
-        InputMode::Normal => Style::default().fg(Color::DarkGray),
-        InputMode::Editing => Style::default().fg(Color::Yellow),
-    };
+    match app.mode {
+        InputMode::Normal => {}
+        InputMode::Editing => {
+            let input_block = Block::default().borders(Borders::ALL).title("Add Task");
+            let style = match app.mode {
+                InputMode::Normal => Style::default().fg(Color::DarkGray),
+                InputMode::Editing => Style::default().fg(Color::Yellow),
+            };
 
-    let input = Paragraph::new(app.input.as_str())
-        .style(style)
-        .block(input_block);
+            let input = Paragraph::new(app.input.as_str().slow_blink())
+                .style(style)
+                .centered()
+                .block(input_block);
+            let area = popup_area(chunks[LIST_INDEX], 30, 30);
 
-    frame.render_widget(input, chunks[INPUT_INDEX]);
+            frame.render_widget(Clear, area);
+            frame.render_widget(input, area);
+        }
+    }
 
     // render footer
     let help_text = match app.mode {
@@ -329,6 +335,14 @@ fn ui(frame: &mut Frame, app: &mut App) {
     };
     let footer = Paragraph::new(help_text).alignment(Alignment::Center);
     frame.render_widget(footer, chunks[FOOTER_INDEX]);
+}
+
+fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
+    let vertical = Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center);
+    let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
+    let [area] = vertical.areas(area);
+    let [area] = horizontal.areas(area);
+    area
 }
 
 async fn fetch_tasks() -> Result<Vec<Task>, Box<dyn std::error::Error>> {
